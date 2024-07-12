@@ -20,19 +20,19 @@ read_writer_to_stream :: proc(rw: ^Read_Writer) -> (s: io.Stream) {
 }
 
 @(private)
-_read_writer_procedure := proc(stream_data: rawptr, mode: io.Stream_Mode, p: []byte, offset: i64, whence: io.Seek_From) -> (n: i64, err: io.Error) {
+_read_writer_procedure := proc(stream_data: rawptr, mode: io.Stream_Mode, p: []byte, offset: i64, whence: io.Seek_From, loc := #caller_location) -> (n: i64, err: io.Error) {
 	rw := (^Read_Writer)(stream_data)
 	n_int: int
 	#partial switch mode {
 	case .Flush:
-		err = writer_flush(rw.w)
+		err = writer_flush(rw.w, loc=loc)
 		return
 	case .Read:
-		n_int, err = reader_read(rw.r, p)
+		n_int, err = reader_read(rw.r, p, loc=loc)
 		n = i64(n_int)
 		return
 	case .Write:
-		n_int, err = writer_write(rw.w, p)
+		n_int, err = writer_write(rw.w, p, loc=loc)
 		n = i64(n_int)
 		return
 	case .Query:

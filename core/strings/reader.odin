@@ -269,14 +269,14 @@ Returns:
 - n: The number of bytes written
 - err: An io.Error if an error occurs while writing (`.Short_Write`)
 */
-reader_write_to :: proc(r: ^Reader, w: io.Writer) -> (n: i64, err: io.Error) {
+reader_write_to :: proc(r: ^Reader, w: io.Writer, loc := #caller_location) -> (n: i64, err: io.Error) {
 	r.prev_rune = -1
 	if r.i >= i64(len(r.s)) {
 		return 0, nil
 	}
 	s := r.s[r.i:]
 	m: int
-	m, err = io.write_string(w, s)
+	m, err = io.write_string(w, s, loc=loc)
 	if m > len(s) {
 		panic("bytes.Reader.write_to: invalid io.write_string count")
 	}
@@ -294,7 +294,7 @@ This VTable is used by the Reader struct to provide its functionality
 as an `io.Stream`.
 */
 @(private)
-_reader_proc :: proc(stream_data: rawptr, mode: io.Stream_Mode, p: []byte, offset: i64, whence: io.Seek_From) -> (n: i64, err: io.Error) {
+_reader_proc :: proc(stream_data: rawptr, mode: io.Stream_Mode, p: []byte, offset: i64, whence: io.Seek_From, loc := #caller_location) -> (n: i64, err: io.Error) {
 	r := (^Reader)(stream_data)
 	#partial switch mode {
 	case .Size:

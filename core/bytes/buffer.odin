@@ -48,8 +48,8 @@ buffer_init_allocator :: proc(b: ^Buffer, len, cap: int, allocator := context.al
 	resize(&b.buf, len)
 }
 
-buffer_destroy :: proc(b: ^Buffer) {
-	delete(b.buf)
+buffer_destroy :: proc(b: ^Buffer, loc := #caller_location) {
+	delete(b.buf, loc=loc)
 	buffer_reset(b)
 }
 
@@ -83,7 +83,7 @@ buffer_reset :: proc(b: ^Buffer) {
 }
 
 
-buffer_truncate :: proc(b: ^Buffer, n: int) {
+buffer_truncate :: proc(b: ^Buffer, n: int, loc := #caller_location) {
 	if n == 0 {
 		buffer_reset(b)
 		return
@@ -92,7 +92,7 @@ buffer_truncate :: proc(b: ^Buffer, n: int) {
 	if n < 0 || n > buffer_length(b) {
 		panic("bytes.truncate: truncation out of range")
 	}
-	resize(&b.buf, b.off+n)
+	resize(&b.buf, b.off+n, loc=loc)
 }
 
 @(private)
@@ -330,10 +330,10 @@ buffer_read_string :: proc(b: ^Buffer, delim: byte) -> (line: string, err: io.Er
 	return string(slice), err
 }
 
-buffer_write_to :: proc(b: ^Buffer, w: io.Writer) -> (n: i64, err: io.Error) {
+buffer_write_to :: proc(b: ^Buffer, w: io.Writer, loc := #caller_location) -> (n: i64, err: io.Error) {
 	b.last_read = .Invalid
 	if byte_count := buffer_length(b); byte_count > 0 {
-		m, e := io.write(w, b.buf[b.off:])
+		m, e := io.write(w, b.buf[b.off:], loc=loc)
 		if m > byte_count {
 			panic("bytes.buffer_write_to: invalid io.write count")
 		}
@@ -352,18 +352,18 @@ buffer_write_to :: proc(b: ^Buffer, w: io.Writer) -> (n: i64, err: io.Error) {
 	return
 }
 
-buffer_read_from :: proc(b: ^Buffer, r: io.Reader) -> (n: i64, err: io.Error) #no_bounds_check {
+buffer_read_from :: proc(b: ^Buffer, r: io.Reader, loc := #caller_location) -> (n: i64, err: io.Error) #no_bounds_check {
 	b.last_read = .Invalid
 	for {
-		i := _buffer_grow(b, MIN_READ)
+		i := _buffer_grow(b, MIN_READ, loc=loc)
 		resize(&b.buf, i)
-		m, e := io.read(r, b.buf[i:cap(b.buf)])
+		m, e := io.read(r, b.buf[i:cap(b.buf)], loc=loc)
 		if m < 0 {
 			err = e if e != nil else .Negative_Read
 			return
 		}
 
-		resize(&b.buf, i+m)
+		resize(&b.buf, i+m, loc=loc)
 		n += i64(m)
 		if e == .EOF {
 			return
@@ -384,7 +384,7 @@ buffer_to_stream :: proc(b: ^Buffer) -> (s: io.Stream) {
 }
 
 @(private)
-_buffer_proc :: proc(stream_data: rawptr, mode: io.Stream_Mode, p: []byte, offset: i64, whence: io.Seek_From) -> (n: i64, err: io.Error) {
+_buffer_proc :: proc(stream_data: rawptr, mode: io.Stream_Mode, p: []byte, offset: i64, whence: io.Seek_From, loc := #caller_location) -> (n: i64, err: io.Error) {
 	b := (^Buffer)(stream_data)
 	#partial switch mode {
 	case .Read:
@@ -392,14 +392,14 @@ _buffer_proc :: proc(stream_data: rawptr, mode: io.Stream_Mode, p: []byte, offse
 	case .Read_At:
 		return io._i64_err(buffer_read_at(b, p, int(offset)))
 	case .Write:
-		return io._i64_err(buffer_write(b, p))
+		return io._i64_err(buffer_write(b, p, loc=loc))
 	case .Write_At:
-		return io._i64_err(buffer_write_at(b, p, int(offset)))
+		return io._i64_err(buffer_write_at(b, p, int(offset), loc=loc))
 	case .Size:
 		n = i64(buffer_capacity(b))
 		return
 	case .Destroy:
-		buffer_destroy(b)
+		buffer_destroy(b, loc=loc)
 		return
 	case .Query:
 		return io.query_utility({.Read, .Read_At, .Write, .Write_At, .Size, .Destroy})

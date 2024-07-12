@@ -19,12 +19,12 @@ Writer :: struct {
 
 }
 
-writer_init :: proc(b: ^Writer, wr: io.Writer, size: int = DEFAULT_BUF_SIZE, allocator := context.allocator) {
+writer_init :: proc(b: ^Writer, wr: io.Writer, size: int = DEFAULT_BUF_SIZE, allocator := context.allocator, loc := #caller_location) {
 	size := size
 	size = max(size, MIN_READ_BUFFER_SIZE)
 	writer_reset(b, wr)
 	b.buf_allocator = allocator
-	b.buf = make([]byte, size, allocator)
+	b.buf = make([]byte, size, allocator, loc=loc)
 }
 
 writer_init_with_buf :: proc(b: ^Writer, wr: io.Writer, buf: []byte) {
@@ -34,8 +34,8 @@ writer_init_with_buf :: proc(b: ^Writer, wr: io.Writer, buf: []byte) {
 }
 
 // writer_destroy destroys the underlying buffer with its associated allocator IFF that allocator has been set
-writer_destroy :: proc(b: ^Writer) {
-	delete(b.buf, b.buf_allocator)
+writer_destroy :: proc(b: ^Writer, loc := #caller_location) {
+	delete(b.buf, b.buf_allocator, loc=loc)
 	b^ = {}
 }
 
@@ -52,7 +52,7 @@ writer_reset :: proc(b: ^Writer, w: io.Writer) {
 
 
 // writer_flush writes any buffered data into the underlying io.Writer
-writer_flush :: proc(b: ^Writer) -> io.Error {
+writer_flush :: proc(b: ^Writer, loc := #caller_location) -> io.Error {
 	if b.err != nil {
 		return b.err
 	}
@@ -60,7 +60,7 @@ writer_flush :: proc(b: ^Writer) -> io.Error {
 		return nil
 	}
 
-	n, err := io.write(b.wr, b.buf[0:b.n])
+	n, err := io.write(b.wr, b.buf[0:b.n], loc=loc)
 	if n < b.n && err == nil {
 		err = .Short_Write
 	}
@@ -89,12 +89,12 @@ writer_buffered :: proc(b: ^Writer) -> int {
 // writer_write writes the contents of p into the buffer
 // It returns the number of bytes written
 // If n < len(p), it will return an error explaining why the write is short
-writer_write :: proc(b: ^Writer, p: []byte) -> (n: int, err: io.Error) {
+writer_write :: proc(b: ^Writer, p: []byte, loc := #caller_location) -> (n: int, err: io.Error) {
 	p := p
 	for len(p) > writer_available(b) && b.err == nil {
 		m: int
 		if writer_buffered(b) == 0 {
-			m, b.err = io.write(b.wr, p)
+			m, b.err = io.write(b.wr, p, loc=loc)
 			if m < 0 && b.err == nil {
 				b.err = .Negative_Write
 				break
@@ -102,7 +102,7 @@ writer_write :: proc(b: ^Writer, p: []byte) -> (n: int, err: io.Error) {
 		} else {
 			m = copy(b.buf[b.n:], p)
 			b.n += m
-			writer_flush(b)
+			writer_flush(b, loc=loc)
 		}
 		n += m
 		p = p[m:]
@@ -117,11 +117,11 @@ writer_write :: proc(b: ^Writer, p: []byte) -> (n: int, err: io.Error) {
 }
 
 // writer_write_byte writes a single byte
-writer_write_byte :: proc(b: ^Writer, c: byte) -> io.Error {
+writer_write_byte :: proc(b: ^Writer, c: byte, loc := #caller_location) -> io.Error {
 	if b.err != nil {
 		return b.err
 	}
-	if writer_available(b) <= 0 && writer_flush(b) != nil {
+	if writer_available(b) <= 0 && writer_flush(b, loc=loc) != nil {
 		return b.err
 	}
 	b.buf[b.n] = c
@@ -130,7 +130,7 @@ writer_write_byte :: proc(b: ^Writer, c: byte) -> io.Error {
 }
 
 // writer_write_rune writes a single unicode code point, and returns the number of bytes written with any error
-writer_write_rune :: proc(b: ^Writer, r: rune) -> (size: int, err: io.Error) {
+writer_write_rune :: proc(b: ^Writer, r: rune, loc := #caller_location) -> (size: int, err: io.Error) {
 	if r < utf8.RUNE_SELF {
 		err = writer_write_byte(b, byte(r))
 		size = 0 if err != nil else 1
@@ -144,7 +144,7 @@ writer_write_rune :: proc(b: ^Writer, r: rune) -> (size: int, err: io.Error) {
 
 	n := writer_available(b)
 	if n < utf8.UTF_MAX {
-		writer_flush(b)
+		writer_flush(b, loc=loc)
 		if b.err != nil {
 			return 0, b.err
 		}
@@ -153,7 +153,7 @@ writer_write_rune :: proc(b: ^Writer, r: rune) -> (size: int, err: io.Error) {
 			// this only happens if the buffer is very small
 			w: int
 			buf, w = utf8.encode_rune(r)
-			return writer_write(b, buf[:w])
+			return writer_write(b, buf[:w], loc=loc)
 		}
 	}
 
@@ -166,20 +166,20 @@ writer_write_rune :: proc(b: ^Writer, r: rune) -> (size: int, err: io.Error) {
 // writer_write_string writes a string into the buffer
 // It returns the number of bytes written
 // If n < len(p), it will return an error explaining why the write is short
-writer_write_string :: proc(b: ^Writer, s: string) -> (int, io.Error) {
-	return writer_write(b, transmute([]byte)s)
+writer_write_string :: proc(b: ^Writer, s: string, loc := #caller_location) -> (int, io.Error) {
+	return writer_write(b, transmute([]byte)s, loc=loc)
 }
 
 // writer_read_from is to support io.Reader_From types
 // If the underlying writer supports the io,read_from, and b has no buffered data yet,
 // this procedure calls the underlying read_from implementation without buffering
-writer_read_from :: proc(b: ^Writer, r: io.Reader) -> (n: i64, err: io.Error) {
+writer_read_from :: proc(b: ^Writer, r: io.Reader, loc := #caller_location) -> (n: i64, err: io.Error) {
 	if b.err != nil {
 		return 0, b.err
 	}
 	for {
 		if writer_available(b) == 0 {
-			writer_flush(b) or_return
+			writer_flush(b, loc=loc) or_return
 		}
 		if b.max_consecutive_empty_writes <= 0 {
 			b.max_consecutive_empty_writes = DEFAULT_MAX_CONSECUTIVE_EMPTY_READS
@@ -206,7 +206,7 @@ writer_read_from :: proc(b: ^Writer, r: io.Reader) -> (n: i64, err: io.Error) {
 
 	if err == .EOF {
 		if writer_available(b) == 0 {
-			err = writer_flush(b)
+			err = writer_flush(b, loc=loc)
 		} else {
 			err = nil
 		}
@@ -230,19 +230,19 @@ writer_to_writer :: proc(b: ^Writer) -> (s: io.Writer) {
 
 
 
-_writer_proc :: proc(stream_data: rawptr, mode: io.Stream_Mode, p: []byte, offset: i64, whence: io.Seek_From) -> (n: i64, err: io.Error) {
+_writer_proc :: proc(stream_data: rawptr, mode: io.Stream_Mode, p: []byte, offset: i64, whence: io.Seek_From, loc := #caller_location) -> (n: i64, err: io.Error) {
 	b := (^Writer)(stream_data)
 	#partial switch mode {
 	case .Flush:
-		err = writer_flush(b)
+		err = writer_flush(b, loc=loc)
 		return
 	case .Write:
 		n_int: int
-		n_int, err = writer_write(b, p)
+		n_int, err = writer_write(b, p, loc=loc)
 		n = i64(n_int)
 		return
 	case .Destroy:
-		writer_destroy(b)
+		writer_destroy(b, loc=loc)
 		return
 	case .Query:
 		return io.query_utility({.Flush, .Write, .Destroy, .Query})

@@ -44,8 +44,8 @@ reader_init_with_buf :: proc(b: ^Reader, rd: io.Reader, buf: []byte) {
 }
 
 // reader_destroy destroys the underlying buffer with its associated allocator IFF that allocator has been set
-reader_destroy :: proc(b: ^Reader) {
-	delete(b.buf, b.buf_allocator)
+reader_destroy :: proc(b: ^Reader, loc := #caller_location) {
+	delete(b.buf, b.buf_allocator, loc=loc)
 	b^ = {}
 }
 
@@ -62,7 +62,7 @@ reader_reset :: proc(b: ^Reader, r: io.Reader) {
 }
 
 @(private)
-_reader_read_new_chunk :: proc(b: ^Reader) -> io.Error {
+_reader_read_new_chunk :: proc(b: ^Reader, loc := #caller_location) -> io.Error {
 	if b.r > 0 {
 		copy(b.buf, b.buf[b.r:b.w])
 		b.w -= b.r
@@ -79,7 +79,7 @@ _reader_read_new_chunk :: proc(b: ^Reader) -> io.Error {
 
 	// read new data, and try a limited number of times
 	for i := b.max_consecutive_empty_reads; i > 0; i -= 1 {
-		n, err := io.read(b.rd, b.buf[b.w:])
+		n, err := io.read(b.rd, b.buf[b.w:], loc=loc)
 		if n < 0 {
 			return err if err != nil else .Negative_Read
 		}
@@ -108,7 +108,7 @@ _reader_consume_err :: proc(b: ^Reader) -> io.Error {
 // If reader_peek returns fewer than n bytes, it also return an error
 // explaining why the read is short
 // The error will be .Buffer_Full if n is larger than the internal buffer size
-reader_peek :: proc(b: ^Reader, n: int) -> (data: []byte, err: io.Error) {
+reader_peek :: proc(b: ^Reader, n: int, loc := #caller_location) -> (data: []byte, err: io.Error) {
 	n := n
 
 	if n < 0 {
@@ -118,7 +118,7 @@ reader_peek :: proc(b: ^Reader, n: int) -> (data: []byte, err: io.Error) {
 	b.last_rune_size = -1
 
 	for b.w-b.r < n && b.w-b.r < len(b.buf) && b.err == nil {
-		_reader_read_new_chunk(b) or_return
+		_reader_read_new_chunk(b, loc=loc) or_return
 	}
 
 	if n > len(b.buf) {
@@ -142,7 +142,7 @@ reader_buffered :: proc(b: ^Reader) -> int {
 }
 
 // reader_discard skips the next n bytes, and returns the number of bytes that were discarded
-reader_discard :: proc(b: ^Reader, n: int) -> (discarded: int, err: io.Error) {
+reader_discard :: proc(b: ^Reader, n: int, loc := #caller_location) -> (discarded: int, err: io.Error) {
 	if n < 0 {
 		return 0, .Negative_Count
 	}
@@ -154,7 +154,7 @@ reader_discard :: proc(b: ^Reader, n: int) -> (discarded: int, err: io.Error) {
 	for {
 		skip := reader_buffered(b)
 		if skip == 0 {
-			_reader_read_new_chunk(b) or_return
+			_reader_read_new_chunk(b, loc=loc) or_return
 			skip = reader_buffered(b)
 		}
 		skip = min(skip, remaining)
@@ -173,7 +173,7 @@ reader_discard :: proc(b: ^Reader, n: int) -> (discarded: int, err: io.Error) {
 
 // reader_read reads data into p
 // The bytes are taken from at most one read on the underlying Reader, which means n may be less than len(p)
-reader_read :: proc(b: ^Reader, p: []byte) -> (n: int, err: io.Error) {
+reader_read :: proc(b: ^Reader, p: []byte, loc := #caller_location) -> (n: int, err: io.Error) {
 	n = len(p)
 	if n == 0 {
 		if reader_buffered(b) > 0 {
@@ -187,7 +187,7 @@ reader_read :: proc(b: ^Reader, p: []byte) -> (n: int, err: io.Error) {
 		}
 
 		if len(p) >= len(b.buf) {
-			n, b.err = io.read(b.rd, p)
+			n, b.err = io.read(b.rd, p, loc=loc)
 			if n < 0 {
 				return 0, b.err if b.err != nil else .Negative_Read
 			}
@@ -200,7 +200,7 @@ reader_read :: proc(b: ^Reader, p: []byte) -> (n: int, err: io.Error) {
 		}
 
 		b.r, b.w = 0, 0
-		n, b.err = io.read(b.rd, b.buf)
+		n, b.err = io.read(b.rd, b.buf, loc=loc)
 		if n < 0 {
 			return 0, b.err if b.err != nil else .Negative_Read
 		}
@@ -219,13 +219,13 @@ reader_read :: proc(b: ^Reader, p: []byte) -> (n: int, err: io.Error) {
 
 // reader_read_byte reads and returns a single byte
 // If no byte is available, it return an error
-reader_read_byte :: proc(b: ^Reader) -> (c: byte, err: io.Error) {
+reader_read_byte :: proc(b: ^Reader, loc := #caller_location) -> (c: byte, err: io.Error) {
 	b.last_rune_size = -1
 	for b.r == b.w {
 		if b.err != nil {
 			return 0, _reader_consume_err(b)
 		}
-		_reader_read_new_chunk(b) or_return
+		_reader_read_new_chunk(b, loc=loc) or_return
 	}
 	c = b.buf[b.r]
 	b.r += 1
@@ -286,9 +286,9 @@ reader_unread_rune :: proc(b: ^Reader) -> io.Error {
 	return nil
 }
 
-reader_write_to :: proc(b: ^Reader, w: io.Writer) -> (n: i64, err: io.Error) {
-	write_buf :: proc(b: ^Reader, w: io.Writer) -> (i64, io.Error) {
-		n, err := io.write(w, b.buf[b.r:b.w])
+reader_write_to :: proc(b: ^Reader, w: io.Writer, loc := #caller_location) -> (n: i64, err: io.Error) {
+	write_buf :: proc(b: ^Reader, w: io.Writer, loc := #caller_location) -> (i64, io.Error) {
+		n, err := io.write(w, b.buf[b.r:b.w], loc=loc)
 		if n < 0 {
 			return 0, err if err != nil else .Negative_Write
 		}
@@ -296,20 +296,20 @@ reader_write_to :: proc(b: ^Reader, w: io.Writer) -> (n: i64, err: io.Error) {
 		return i64(n), err
 	}
 
-	n = write_buf(b, w) or_return
+	n = write_buf(b, w, loc=loc) or_return
 
 	m: i64
 	if b.w-b.r < len(b.buf) {
-		_reader_read_new_chunk(b) or_return
+		_reader_read_new_chunk(b, loc=loc) or_return
 	}
 
 	for b.r < b.w {
-		m, err = write_buf(b, w)
+		m, err = write_buf(b, w, loc=loc)
 		n += m // this needs to be done before returning
 		if err != nil {
 			return
 		}
-		_reader_read_new_chunk(b) or_return
+		_reader_read_new_chunk(b, loc=loc) or_return
 	}
 
 	if b.err == .EOF {
@@ -332,13 +332,13 @@ reader_to_stream :: proc(b: ^Reader) -> (s: io.Stream) {
 
 
 @(private)
-_reader_proc :: proc(stream_data: rawptr, mode: io.Stream_Mode, p: []byte, offset: i64, whence: io.Seek_From) -> (n: i64, err: io.Error) {
+_reader_proc :: proc(stream_data: rawptr, mode: io.Stream_Mode, p: []byte, offset: i64, whence: io.Seek_From, loc := #caller_location) -> (n: i64, err: io.Error) {
 	b := (^Reader)(stream_data)
 	#partial switch mode {
 	case .Read:
-		return io._i64_err(reader_read(b, p))
+		return io._i64_err(reader_read(b, p, loc=loc))
 	case .Destroy:
-		reader_destroy(b)
+		reader_destroy(b, loc=loc)
 		return
 	case .Query:
 		return io.query_utility({.Read, .Destroy, .Query})
@@ -361,7 +361,7 @@ _reader_proc :: proc(stream_data: rawptr, mode: io.Stream_Mode, p: []byte, offse
 //
 // reader_read_slice returns err != nil if and only if line does not end in delim
 //
-reader_read_slice :: proc(b: ^Reader, delim: byte) -> (line: []byte, err: io.Error) {
+reader_read_slice :: proc(b: ^Reader, delim: byte, loc := #caller_location) -> (line: []byte, err: io.Error) {
 	s := 0
 	for {
 		if i := bytes.index_byte(b.buf[b.r+s : b.w], delim); i >= 0 {
@@ -387,7 +387,7 @@ reader_read_slice :: proc(b: ^Reader, delim: byte) -> (line: []byte, err: io.Err
 
 		s = b.w - b.r
 
-		_reader_read_new_chunk(b) or_break
+		_reader_read_new_chunk(b, loc=loc) or_break
 	}
 
 	if i := len(line)-1; i >= 0 {
@@ -400,14 +400,14 @@ reader_read_slice :: proc(b: ^Reader, delim: byte) -> (line: []byte, err: io.Err
 
 // reader_read_bytes reads until the first occurrence of delim from the Reader
 // It returns an allocated slice containing the data up to and including the delimiter
-reader_read_bytes :: proc(b: ^Reader, delim: byte, allocator := context.allocator) -> (buf: []byte, err: io.Error) {
+reader_read_bytes :: proc(b: ^Reader, delim: byte, allocator := context.allocator, loc := #caller_location) -> (buf: []byte, err: io.Error) {
 	full: [dynamic]byte
 	full.allocator = allocator
 
 	frag: []byte
 	for {
 		e: io.Error
-		frag, e = reader_read_slice(b, delim)
+		frag, e = reader_read_slice(b, delim, loc=loc)
 		if e == nil {
 			break
 		}
@@ -424,7 +424,7 @@ reader_read_bytes :: proc(b: ^Reader, delim: byte, allocator := context.allocato
 
 // reader_read_string reads until the first occurrence of delim from the Reader
 // It returns an allocated string containing the data up to and including the delimiter
-reader_read_string :: proc(b: ^Reader, delim: byte, allocator := context.allocator) -> (string, io.Error) {
-	buf, err := reader_read_bytes(b, delim, allocator)
+reader_read_string :: proc(b: ^Reader, delim: byte, allocator := context.allocator, loc := #caller_location) -> (string, io.Error) {
+	buf, err := reader_read_bytes(b, delim, allocator, loc=loc)
 	return string(buf), err
 }

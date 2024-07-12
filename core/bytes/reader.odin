@@ -116,14 +116,14 @@ reader_seek :: proc(r: ^Reader, offset: i64, whence: io.Seek_From) -> (i64, io.E
 	r.i = abs
 	return abs, nil
 }
-reader_write_to :: proc(r: ^Reader, w: io.Writer) -> (n: i64, err: io.Error) {
+reader_write_to :: proc(r: ^Reader, w: io.Writer, loc := #caller_location) -> (n: i64, err: io.Error) {
 	r.prev_rune = -1
 	if r.i >= i64(len(r.s)) {
 		return 0, nil
 	}
 	s := r.s[r.i:]
 	m: int
-	m, err = io.write(w, s)
+	m, err = io.write(w, s, loc=loc)
 	if m > len(s) {
 		panic("bytes.Reader.write_to: invalid io.write_string count")
 	}
@@ -137,7 +137,7 @@ reader_write_to :: proc(r: ^Reader, w: io.Writer) -> (n: i64, err: io.Error) {
 
 
 @(private)
-_reader_proc :: proc(stream_data: rawptr, mode: io.Stream_Mode, p: []byte, offset: i64, whence: io.Seek_From) -> (n: i64, err: io.Error) {
+_reader_proc :: proc(stream_data: rawptr, mode: io.Stream_Mode, p: []byte, offset: i64, whence: io.Seek_From, loc := #caller_location) -> (n: i64, err: io.Error) {
 	r := (^Reader)(stream_data)
 	#partial switch mode {
 	case .Read:

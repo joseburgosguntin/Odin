@@ -292,13 +292,13 @@ Tee_Reader :: struct {
 }
 
 @(private)
-_tee_reader_proc :: proc(stream_data: rawptr, mode: Stream_Mode, p: []byte, offset: i64, whence: Seek_From) -> (n: i64, err: Error) {
+_tee_reader_proc :: proc(stream_data: rawptr, mode: Stream_Mode, p: []byte, offset: i64, whence: Seek_From, loc := #caller_location) -> (n: i64, err: Error) {
 	t := (^Tee_Reader)(stream_data)
 	#partial switch mode {
 	case .Read:
-		n, err = _i64_err(read(t.r, p))
+		n, err = _i64_err(read(t.r, p, loc=loc))
 		if n > 0 {
-			if wn, werr := write(t.w, p[:n]); werr != nil {
+			if wn, werr := write(t.w, p[:n], loc=loc); werr != nil {
 				return i64(wn), werr
 			}
 		}
@@ -336,7 +336,7 @@ Limited_Reader :: struct {
 }
 
 @(private)
-_limited_reader_proc :: proc(stream_data: rawptr, mode: Stream_Mode, p: []byte, offset: i64, whence: Seek_From) -> (n: i64, err: Error) {
+_limited_reader_proc :: proc(stream_data: rawptr, mode: Stream_Mode, p: []byte, offset: i64, whence: Seek_From, loc := #caller_location) -> (n: i64, err: Error) {
 	l := (^Limited_Reader)(stream_data)
 	#partial switch mode {
 	case .Read:
@@ -347,7 +347,7 @@ _limited_reader_proc :: proc(stream_data: rawptr, mode: Stream_Mode, p: []byte, 
 		if i64(len(p)) > l.n {
 			p = p[0:l.n]
 		}
-		n, err = _i64_err(read(l.r, p))
+		n, err = _i64_err(read(l.r, p, loc=loc))
 		l.n -= i64(n)
 		return
 	case .Query:
@@ -389,7 +389,7 @@ section_reader_to_stream :: proc(s: ^Section_Reader) -> (out: Stream) {
 }
 
 @(private)
-_section_reader_proc :: proc(stream_data: rawptr, mode: Stream_Mode, p: []byte, offset: i64, whence: Seek_From) -> (n: i64, err: Error) {
+_section_reader_proc :: proc(stream_data: rawptr, mode: Stream_Mode, p: []byte, offset: i64, whence: Seek_From, loc := #caller_location) -> (n: i64, err: Error) {
 	s := (^Section_Reader)(stream_data)
 	#partial switch mode {
 	case .Read:
@@ -400,7 +400,7 @@ _section_reader_proc :: proc(stream_data: rawptr, mode: Stream_Mode, p: []byte, 
 		if max := s.limit - s.off; i64(len(p)) > max {
 			p = p[0:max]
 		}
-		n, err = _i64_err(read_at(s.r, p, s.off))
+		n, err = _i64_err(read_at(s.r, p, s.off, loc=loc))
 		s.off += i64(n)
 		return
 	case .Read_At:
@@ -412,13 +412,13 @@ _section_reader_proc :: proc(stream_data: rawptr, mode: Stream_Mode, p: []byte, 
 		off += s.base
 		if max := s.limit - off; i64(len(p)) > max {
 			p = p[0:max]
-			n, err = _i64_err(read_at(s.r, p, off))
+			n, err = _i64_err(read_at(s.r, p, off, loc=loc))
 			if err == nil {
 				err = .EOF
 			}
 			return
 		}
-		return _i64_err(read_at(s.r, p, off))
+		return _i64_err(read_at(s.r, p, off, loc=loc))
 
 	case .Seek:
 		offset := offset
